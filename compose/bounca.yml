@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16.1-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bounca
+      POSTGRES_PASSWORD: bounca
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - net-bounca
+
+  bounca:
+    image: aluveitie/bounca:latest
+    restart: unless-stopped
+    environment:
+      BOUNCA_FQDN: bounca.home
+      DB_PWD: bounca
+    networks:
+      - net-bounca
+      - web
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.http.routers.bounca.rule=Host(`bounca.home`)"
+      - "traefik.http.routers.bounca.tls=true"
+      - "traefik.http.services.bounca.loadbalancer.server.port=8080"
+      - "traefik.http.routers.bounca.entrypoints=websecure"
+
+
+networks:
+  net-bounca:
+    driver: bridge
+  web:
+    external: true
+
+volumes:
+  postgres_data:
+    driver: local

@@ -1,0 +1,23 @@
+services:
+  webdav:
+    image: bytemark/webdav
+    restart: always
+    environment:
+      AUTH_TYPE: Basic
+      USERNAME: alice
+      PASSWORD: secret1234
+    volumes:
+      - /root/dav:/var/lib/dav
+    labels:
+      - "traefik.http.routers.webdav.rule=Host(`webdav.home`)"
+      - "traefik.http.routers.webdav.tls=true"
+      - "traefik.http.services.webdav.loadbalancer.server.port=80"
+      - "traefik.http.routers.webdav.entrypoints=websecure"
+    command: "bash -c 'umask 000 && /usr/local/bin/docker-entrypoint.sh && httpd-foreground'"
+    networks:
+      - default
+      - web
+
+networks:
+  web:
+    external: true
