@@ -1,0 +1,114 @@
+# Usage: ansible-playbook playbooks/pihole.yml
+
+- name: Create LXC container
+  hosts: proxmox_servers
+  gather_facts: false
+  vars:
+    container_name: "my-lxc-container"
+    template: "ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
+    node: "{{ proxmox_node }}"
+    vmid: 200
+
+  tasks:
+    - name: Create container
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/create_lxc.yml"
+
+    - name: Update package index
+      ansible.builtin.apt:
+        update_cache: true
+      delegate_to: "{{ container_name }}"
+      become: true
+
+    - name: Install curl
+      ansible.builtin.apt:
+        name: curl
+        state: present
+      delegate_to: "{{ container_name }}"
+      become: true
+
+    - name: Make directory for Pi-Hole config
+      ansible.builtin.file:
+        path: "/etc/pihole"
+        state: directory
+        mode: "0755"
+        owner: "pihole"
+        group: "pihole"
+      delegate_to: "{{ container_name }}"
+
+    - name: Check if Pi-Hole is already installed
+      ansible.builtin.stat:
+        path: "/etc/pihole/pihole.toml"
+      delegate_to: "{{ container_name }}"
+      register: pihole_installed
+
+    - name: Copy pihole.toml
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../apps/pihole.toml"
+        dest: "/etc/pihole/pihole.toml"
+        mode: "0644"
+        owner: "pihole"
+        group: "pihole"
+      delegate_to: "{{ container_name }}"
+      become: true
+
+    - name: Install Pi-Hole
+      ansible.builtin.shell: curl -sSL https://install.pi-hole.net | bash /dev/stdin --unattended
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ container_name }}"
+      become: true
+      when: not pihole_installed.stat.exists
+
+    - name: Remove all existing adlist
+      ansible.builtin.command: "pihole-FTL sqlite3 /etc/pihole/gravity.db 'DELETE FROM adlist;'"
+      delegate_to: "{{ container_name }}"
+      become: true
+
+    - name: Add custom adlist
+      ansible.builtin.command: 'pihole-FTL sqlite3 /etc/pihole/gravity.db "INSERT INTO adlist (address, enabled, comment) VALUES (''{{ item }}'', 1, ''Added by Ansible'');"'
+      delegate_to: "{{ container_name }}"
+      become: true
+      loop:
+        - https://adaway.org/hosts.txt
+        - https://gitlab.com/quidsup/notrack-blocklists/raw/master/notrack-blocklist.txt
+        - https://gitlab.com/quidsup/notrack-blocklists/raw/master/notrack-malware.txt
+        - https://hostfiles.frogeye.fr/firstparty-trackers-hosts.txt
+        - https://raw.githubusercontent.com/AdguardTeam/cname-trackers/master/data/combined_disguised_ads.txt
+        - https://raw.githubusercontent.com/AdguardTeam/cname-trackers/master/data/combined_disguised_trackers.txt
+        - https://raw.githubusercontent.com/AmnestyTech/investigations/master/2021-07-18_nso/domains.txt
+        - https://raw.githubusercontent.com/DandelionSprout/adfilt/master/Alternate%20versions%20Anti-Malware%20List/AntiMalwareHosts.txt
+        - https://raw.githubusercontent.com/FadeMind/hosts.extras/master/UncheckyAds/hosts
+        - https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.Risk/hosts
+        - https://raw.githubusercontent.com/FadeMind/hosts.extras/master/add.Spam/hosts
+        - https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/AmazonFireTV.txt
+        - https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV.txt
+        - https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/android-tracking.txt
+        - https://raw.githubusercontent.com/PolishFiltersTeam/KADhosts/master/KADomains.txt
+        - https://raw.githubusercontent.com/RPiList/specials/master/Blocklisten/Win10Telemetry
+        - https://raw.githubusercontent.com/RPiList/specials/master/Blocklisten/crypto
+        - https://raw.githubusercontent.com/RPiList/specials/master/Blocklisten/easylist
+        - https://raw.githubusercontent.com/RPiList/specials/master/Blocklisten/malware
+        - https://raw.githubusercontent.com/RPiList/specials/master/Blocklisten/samsung
+        - https://raw.githubusercontent.com/RPiList/specials/master/Blocklisten/spam.mails
+        - https://raw.githubusercontent.com/Spam404/lists/master/adblock-list.txt
+        - https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt
+        - https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt
+        - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt
+        - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/tif.txt
+        - https://raw.githubusercontent.com/notracking/hosts-blocklists/master/adblock/adblock.txt
+        - https://raw.githubusercontent.com/wlqY8gkVb9w1Ck5MVD4lBre9nWJez8/W10TelemetryBlocklist/master/W10TelemetryBlocklist
+        - https://s3.amazonaws.com/lists.disconnect.me/simple_ad.txt
+        - https://s3.amazonaws.com/lists.disconnect.me/simple_malvertising.txt
+        - https://s3.amazonaws.com/lists.disconnect.me/simple_tracking.txt
+        - https://urlhaus.abuse.ch/downloads/hostfile/
+        - https://v.firebog.net/hosts/AdguardDNS.txt
+        - https://v.firebog.net/hosts/Easylist.txt
+        - https://v.firebog.net/hosts/Easyprivacy.txt
+        - https://v.firebog.net/hosts/Prigent-Ads.txt
+        - https://v.firebog.net/hosts/Prigent-Malware.txt
+        - https://www.github.developerdan.com/hosts/lists/ads-and-tracking-extended.txt
+
+    - name: Update gravity database
+      ansible.builtin.command: "pihole -g"
+      delegate_to: "{{ container_name }}"
+      become: true

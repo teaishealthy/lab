@@ -1,0 +1,10 @@
+- name: Provision Docker KVM
+  ansible.builtin.import_playbook: create_docker_kvm.yml
+
+- name: Deploy compose stack
+  hosts: docker_vms
+  gather_facts: false
+
+  tasks:
+    - name: Deploy stack
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/deploy_stack.yml"

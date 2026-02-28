@@ -1,0 +1,56 @@
+- name: Download template
+  community.proxmox.proxmox_template:
+    api_host: "{{ api_host }}"
+    api_user: "{{ api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    node: "{{ proxmox_node }}"
+    storage: local
+    content_type: vztmpl
+    template: "{{ template }}"
+    state: present
+
+- name: Create LXC container
+  community.proxmox.proxmox:
+    api_host: "{{ api_host }}"
+    api_user: "{{ api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    validate_certs: "{{ api_validate_certs }}"
+    node: "{{ node }}"
+    hostname: "{{ container_name }}"
+    ostemplate: "local:vztmpl/{{ template }}"
+    pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+    storage: local-lvm
+    state: present
+    vmid: "{{ vmid }}"
+    netif:
+      net0: "name=eth0,ip=dhcp,bridge=vmbr0"
+
+  register: lxc_created
+
+- name: Ensure container is started
+  community.proxmox.proxmox:
+    api_host: "{{ api_host }}"
+    api_user: "{{ api_user }}"
+    api_password: "{{ proxmox_api_password }}"
+    validate_certs: "{{ api_validate_certs }}"
+    node: "{{ node }}"
+    vmid: "{{ vmid }}"
+    state: started
+
+- name: Resolve the hostname on the Proxmox host
+  ansible.builtin.shell: "pct exec {{ vmid }} -- hostname -I | awk '{print $1}'"
+  register: resolved_hostname
+  delegate_to: "{{ inventory_hostname }}"
+  retries: 10
+  delay: 1
+  until: resolved_hostname.stdout != ""
+
+- name: Add host entry for new container
+  ansible.builtin.add_host:
+    name: "{{ container_name }}"
+    ansible_host: "{{ resolved_hostname.stdout }}"
+    groups: lxc_containers
+
+- name: Display LXC creation result
+  ansible.builtin.debug:
+    var: lxc_created

@@ -1,0 +1,12 @@
+# Usage:
+#   ansible-playbook site.yml
+
+- name: Configure Proxmox host
+  ansible.builtin.import_playbook: playbooks/configure_host.yml
+
+- name: Deploy all stacks
+  ansible.builtin.import_playbook: playbooks/deploy_all_stacks.yml
+  vars:
+    vm_name: docker01
+    vm_id: 400
+    vm_ip: "192.168.122.100"

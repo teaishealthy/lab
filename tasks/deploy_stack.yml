@@ -1,0 +1,34 @@
+# Shared tasks to deploy a single compose stack
+# Required vars: compose_file (path on control machine)
+# Optional vars: app_name (defaults to filename without extension)
+
+- name: Set stack name from filename
+  ansible.builtin.set_fact:
+    _stack_name: "{{ app_name | default(compose_file | basename | splitext | first) }}"
+
+- name: Create app directory
+  ansible.builtin.file:
+    path: "/opt/{{ _stack_name }}"
+    state: directory
+    mode: "0755"
+
+- name: Add managed marker
+  ansible.builtin.copy:
+    content: "managed by ansible\n"
+    dest: "/opt/{{ _stack_name }}/.managed-by-ansible"
+    mode: "0644"
+
+- name: Copy compose file to VM
+  ansible.builtin.copy:
+    src: "{{ compose_file }}"
+    dest: "/opt/{{ _stack_name }}/docker-compose.yml"
+    mode: "0644"
+
+- name: Deploy stack
+  community.docker.docker_compose_v2:
+    project_src: "/opt/{{ _stack_name }}"
+    state: present
+
+- name: Stack deployed
+  ansible.builtin.debug:
+    msg: "{{ _stack_name }} deployed on {{ inventory_hostname }} ({{ ansible_host }})"

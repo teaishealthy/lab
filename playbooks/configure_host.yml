@@ -1,0 +1,46 @@
+# Ensure Proxmox host is configured with baseline settings
+- name: Configure Proxmox host baseline
+  hosts: proxmox_servers
+  gather_facts: true
+  tasks:
+    - name: Remove unwanted Proxmox repository files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/pve-enterprise.list
+        - /etc/apt/sources.list.d/pve-enterprise.sources
+        - /etc/apt/sources.list.d/ceph.sources
+
+    - name: Enable no-subscription repo
+      ansible.builtin.apt_repository:
+        repo: "deb http://download.proxmox.com/debian/pve {{ ansible_distribution_release }} pve-no-subscription"
+        state: present
+        filename: pve-no-subscription
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+      register: upgrade_result
+
+    - name: Install useful packages
+      ansible.builtin.apt:
+        name:
+          - htop
+          - curl
+          - wget
+          - git
+          - tmux
+          - sudo
+          - python3-pip
+          - libguestfs-tools
+        state: present
+
+    - name: Ensure proxmoxer python lib is available
+      ansible.builtin.apt:
+        name: python3-proxmoxer
+        state: present

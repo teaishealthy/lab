@@ -1,0 +1,83 @@
+# Usage:
+#   ansible-playbook playbooks/deploy_all_stacks.yml \
+#     -e "vm_name=docker01 vm_id=400 vm_ip=192.168.122.100"
+
+- name: Provision Docker KVM
+  ansible.builtin.import_playbook: create_docker_kvm.yml
+
+- name: Deploy all compose stacks
+  hosts: docker_vms
+  gather_facts: false
+  vars:
+    stacks_dir: "{{ playbook_dir }}/../stacks"
+
+  tasks:
+    - name: Find all compose files
+      ansible.builtin.find:
+        paths: "{{ stacks_dir }}"
+        patterns: "*.yml,*.yaml"
+      delegate_to: localhost
+      become: false
+      register: stack_files
+
+    - name: Build list of local stack names
+      ansible.builtin.set_fact:
+        local_stacks: "{{ stack_files.files | map(attribute='path') | map('basename') | map('splitext') | map('first') | list }}"
+
+    - name: Find deployed stacks on remote
+      ansible.builtin.find:
+        paths: /opt
+        file_type: file
+        patterns: ".managed-by-ansible"
+        hidden: true
+        recurse: true
+        depth: 2
+      register: managed_markers
+
+    - name: Build list of remote stack names
+      ansible.builtin.set_fact:
+        remote_stacks: "{{ managed_markers.files | map(attribute='path') | map('dirname') | map('basename') | list }}"
+
+    - name: Identify orphaned stacks
+      ansible.builtin.set_fact:
+        orphaned_stacks: "{{ remote_stacks | difference(local_stacks) }}"
+
+    - name: Show orphaned stacks
+      ansible.builtin.debug:
+        msg: "Found orphaned stacks on remote: {{ orphaned_stacks }}"
+      when: orphaned_stacks | length > 0
+
+    - name: Prompt to remove orphaned stacks
+      ansible.builtin.pause:
+        prompt: "Remove orphaned stack '{{ item }}'? (yes/no)"
+      loop: "{{ orphaned_stacks }}"
+      register: removal_prompts
+      when: orphaned_stacks | length > 0
+
+    - name: Tear down confirmed stacks
+      community.docker.docker_compose_v2:
+        project_src: "/opt/{{ item.item }}"
+        state: absent
+      loop: "{{ removal_prompts.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('skip') }}"
+      when:
+        - item.user_input | default('no') | lower == 'yes'
+
+    - name: Remove confirmed stack directories
+      ansible.builtin.file:
+        path: "/opt/{{ item.item }}"
+        state: absent
+      loop: "{{ removal_prompts.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('skip') }}"
+      when:
+        - item.user_input | default('no') | lower == 'yes'
+
+    - name: Deploy each stack
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/deploy_stack.yml"
+      loop: "{{ stack_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      vars:
+        compose_file: "{{ item.path }}"

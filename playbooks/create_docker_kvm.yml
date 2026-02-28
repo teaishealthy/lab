@@ -1,0 +1,134 @@
+# Usage:
+#    ansible-playbook playbooks/create_docker_kvm.yml \
+#     -e "vm_name=docker01 vm_id=400 vm_ip=192.168.122.100"
+
+- name: Create Docker-ready KVM VM
+  hosts: proxmox_servers
+  gather_facts: false
+  vars:
+    _vm_cores: "{{ vm_cores | default(vm_defaults.cores) }}"
+    _vm_memory: "{{ vm_memory | default(vm_defaults.memory) }}"
+    _vm_disk_size: "{{ vm_disk_size | default(vm_defaults.disk_size) }}"
+    _vm_bridge: "{{ vm_bridge | default(vm_defaults.net.bridge) }}"
+    cloud_image_url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
+    cloud_image_file: "debian-12-generic-amd64.qcow2"
+    cloud_image_dir: "/var/lib/vz/images"
+
+  tasks:
+    - name: Ensure image directory exists
+      ansible.builtin.file:
+        path: "{{ cloud_image_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download Debian cloud image
+      ansible.builtin.get_url:
+        url: "{{ cloud_image_url }}"
+        dest: "{{ cloud_image_dir }}/{{ cloud_image_file }}"
+        mode: "0644"
+
+    - name: Create VM with cloud-init
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ api_host }}"
+        api_user: "{{ api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        validate_certs: "{{ api_validate_certs }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ vm_id }}"
+        name: "{{ vm_name }}"
+        cores: "{{ _vm_cores }}"
+        memory: "{{ _vm_memory }}"
+        ostype: l26
+        scsihw: virtio-scsi-single
+        agent: "enabled=1"
+        onboot: true
+        net:
+          net0: "virtio,bridge={{ _vm_bridge }}"
+        serial:
+          serial0: socket
+        vga: serial0
+        ciuser: root
+        sshkeys: "{{ ssh_pub_key }}"
+        nameservers: "{{ proxmox_nameservers }}"
+        ipconfig:
+          ipconfig0: "ip={{ vm_ip }}/{{ proxmox_cidr }},gw={{ proxmox_gateway }}"
+        boot: "order=scsi0"
+        state: present
+      register: vm_created
+
+    - name: Add cloud-init drive
+      ansible.builtin.command:
+        cmd: "qm set {{ vm_id }} --ide2 {{ proxmox_storage }}:cloudinit"
+      when: vm_created is changed
+      changed_when: true
+
+    - name: Import cloud image disk
+      community.proxmox.proxmox_disk:
+        api_host: "{{ api_host }}"
+        api_user: "{{ api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        validate_certs: "{{ api_validate_certs }}"
+        vmid: "{{ vm_id }}"
+        disk: scsi0
+        storage: "{{ proxmox_storage }}"
+        import_from: "{{ cloud_image_dir }}/{{ cloud_image_file }}"
+        discard: "on"
+        ssd: true
+        state: present
+        timeout: 300
+      when: vm_created is changed
+
+    - name: Resize disk
+      community.proxmox.proxmox_disk:
+        api_host: "{{ api_host }}"
+        api_user: "{{ api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        validate_certs: "{{ api_validate_certs }}"
+        vmid: "{{ vm_id }}"
+        disk: scsi0
+        size: "{{ _vm_disk_size }}"
+        state: resized
+      when: vm_created is changed
+
+    - name: Start VM
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ api_host }}"
+        api_user: "{{ api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        validate_certs: "{{ api_validate_certs }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ vm_id }}"
+        state: started
+
+    - name: Wait for SSH on {{ vm_ip }}
+      ansible.builtin.wait_for:
+        host: "{{ vm_ip }}"
+        port: 22
+        delay: 1
+        timeout: 180
+
+    - name: Add VM to inventory
+      ansible.builtin.add_host:
+        name: "{{ vm_name }}"
+        ansible_host: "{{ vm_ip }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        groups: docker_vms
+
+    - name: VM ready
+      ansible.builtin.debug:
+        msg: "VM {{ vm_name }} ({{ vm_id }}) ready at {{ vm_ip }}"
+
+- name: Install Docker on VM
+  hosts: docker_vms
+  gather_facts: true
+  pre_tasks:
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command:
+        cmd: cloud-init status --wait
+      changed_when: false
+      timeout: 300
+
+  roles:
+    - role: geerlingguy.docker

@@ -1,0 +1,6 @@
+all:
+  children:
+    proxmox_servers:
+      hosts:
+        proxmox:
+          ansible_host: 192.168.122.248

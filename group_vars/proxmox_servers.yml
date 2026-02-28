@@ -1,0 +1,28 @@
+api_host: "192.168.122.248"
+api_user: "root@pam"
+api_token_id: "ansible"
+
+api_validate_certs: false
+
+proxmox_node: "proxmox"
+
+proxmox_storage: "local-lvm"
+proxmox_iso_storage: "local"
+
+proxmox_bridge: "vmbr0"
+proxmox_gateway: "192.168.122.1"
+proxmox_cidr: "24"
+proxmox_nameservers:
+  - "8.8.8.8"
+  - "1.1.1.1"
+
+ssh_pub_key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+
+vm_defaults:
+  cores: 2
+  memory: 2048
+  disk_size: "8G"
+  os_type: "l26"
+  net:
+    bridge: "vmbr0"
+    model: "virtio"
